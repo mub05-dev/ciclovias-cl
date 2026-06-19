@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: postgis/postgis:16-3.4
+    image: pgrouting/pgrouting:16-3.5-3.7
     container_name: ciclovias-postgres
     restart: unless-stopped
     environment:

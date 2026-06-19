@@ -8,3 +8,4 @@ dist
 __pycache__
 .venv
 apps/pipeline/data/
+apps/pipeline/cache/
