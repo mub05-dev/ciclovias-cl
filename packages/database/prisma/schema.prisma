@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// Nodo de la red ciclista (intersección o punto del grafo)
+model Node {
+  id        BigInt   @id // osmid real de OSM, no autoincremental
+  lat       Float
+  lon       Float
+  geom      Unsupported("geometry(Point, 4326)")
+  elevation Float? // metros sobre el nivel del mar
+
+  edgesFrom Edge[] @relation("EdgeSource")
+  edgesTo   Edge[] @relation("EdgeTarget")
+
+  @@map("nodes")
+}
+
+// Tramo de calle/ciclovía entre dos nodos
+model Edge {
+  id            Int      @id @default(autoincrement())
+  sourceId      BigInt
+  targetId      BigInt
+  highway       String? // tipo de vía: cycleway, residential, primary, etc.
+  lengthM       Float
+  geom          Unsupported("geometry(LineString, 4326)")
+
+  // Calculados en el pipeline de ingesta
+  desnivelM     Float?
+  pendientePct  Float?
+  scoreTipo     Float? // 1.0 = ciclovía real, 1.5 = calle tranquila, 3.0 = tráfico fuerte
+  scoreFinal    Float? // score_tipo combinado con pendiente
+
+  comuna        String? // San Miguel, Santiago, Providencia, Las Condes, Vitacura
+
+  source        Node     @relation("EdgeSource", fields: [sourceId], references: [id])
+  target        Node     @relation("EdgeTarget", fields: [targetId], references: [id])
+
+  tramosCalidad TramoCalidad[]
+
+  @@index([highway])
+  @@index([comuna])
+  @@map("edges")
+}
+
+// Tu capa de enriquecimiento propio (M04) — reportes manuales de calidad real
+model TramoCalidad {
+  id            Int      @id @default(autoincrement())
+  edgeId        Int
+  tipoReal      String   // segregada, pintada, compartida, sin_proteccion
+  estado        String   // bueno, regular, malo
+  iluminacion   Boolean?
+  notas         String?
+  reportadoPor  String   @default("marco") // por ahora solo tú reportas
+  createdAt     DateTime @default(now())
+
+  edge          Edge     @relation(fields: [edgeId], references: [id])
+
+  @@map("tramos_calidad")
+}
+
+// Registro de cada corrida del pipeline de ingesta (M01, T2)
+model JobIngesta {
+  id          Int      @id @default(autoincrement())
+  comuna      String
+  nodosCount  Int
+  edgesCount  Int
+  duracionMs  Int
+  status      String   // success, partial, failed
+  errorMsg    String?
+  createdAt   DateTime @default(now())
+
+  @@map("jobs_ingesta")
+}

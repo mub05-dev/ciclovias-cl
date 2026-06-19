@@ -1,0 +1,1 @@
+ALTER TABLE edges ADD CONSTRAINT edges_source_target_unique UNIQUE ("sourceId", "targetId");
