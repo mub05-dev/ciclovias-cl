@@ -1,0 +1,2 @@
+ALTER TABLE edges ADD COLUMN oneway BOOLEAN DEFAULT false;
+ALTER TABLE edges ADD COLUMN oneway_invertido BOOLEAN DEFAULT false;

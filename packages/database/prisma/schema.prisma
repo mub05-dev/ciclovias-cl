@@ -37,6 +37,9 @@ model Edge {
 
   comuna        String? // San Miguel, Santiago, Providencia, Las Condes, Vitacura
 
+  oneway          Boolean? @default(false)
+  onewayInvertido Boolean? @default(false) @map("oneway_invertido")
+
   source        Node     @relation("EdgeSource", fields: [sourceId], references: [id])
   target        Node     @relation("EdgeTarget", fields: [targetId], references: [id])
 

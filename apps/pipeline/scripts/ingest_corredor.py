@@ -84,6 +84,26 @@ def normalize_highway(val):
     return val
 
 
+def parse_oneway(val):
+    """
+    Determina si un edge es de sentido único y si está invertido respecto
+    a la geometría almacenada (u -> v).
+
+    OSM expresa oneway de varias formas, y networkx además serializa
+    booleanos de Python como strings al guardar en .graphml:
+    - True / "True" / "yes"  -> sentido único, normal (u -> v permitido)
+    - "-1"                   -> sentido único, invertido (solo v -> u permitido)
+    - False / "False" / "no" / ausente -> bidireccional
+
+    Devuelve (es_oneway: bool, invertido: bool).
+    """
+    if val in (True, "True", "yes"):
+        return True, False
+    if val == "-1":
+        return True, True
+    return False, False
+
+
 def main():
     inicio = time.time()
     print(f"Cargando grafo desde {GRAPHML_PATH}...")
@@ -155,6 +175,8 @@ def main():
         if pendiente_pct is not None:
             score_final = score_tipo * (1 + abs(pendiente_pct) / 10)
 
+        es_oneway, oneway_invertido = parse_oneway(data.get("oneway"))
+
         lat_u, lon_u = node_coords[u]
         comuna = classify_comuna(lat_u, lon_u)
 
@@ -163,7 +185,8 @@ def main():
         wkt = f"LINESTRING({lon_u} {lat_u}, {lon_v} {lat_v})"
 
         row = (int(u), int(v), highway, length_m, wkt,
-               desnivel, pendiente_pct, score_tipo, score_final, comuna)
+               desnivel, pendiente_pct, score_tipo, score_final, comuna,
+               es_oneway, oneway_invertido)
         key = (int(u), int(v))
         if key not in edges_dict or length_m < edges_dict[key][3]:
             edges_dict[key] = row
@@ -175,7 +198,8 @@ def main():
     execute_values(cur, """
         INSERT INTO edges (
             "sourceId", "targetId", highway, "lengthM", geom,
-            "desnivelM", "pendientePct", "scoreTipo", "scoreFinal", comuna
+            "desnivelM", "pendientePct", "scoreTipo", "scoreFinal", comuna,
+            oneway, oneway_invertido
         )
         VALUES %s
         ON CONFLICT ("sourceId", "targetId") DO UPDATE SET
@@ -186,8 +210,10 @@ def main():
             "pendientePct" = EXCLUDED."pendientePct",
             "scoreTipo" = EXCLUDED."scoreTipo",
             "scoreFinal" = EXCLUDED."scoreFinal",
-            comuna = EXCLUDED.comuna
-    """, edges_rows, template="(%s, %s, %s, %s, ST_SetSRID(ST_GeomFromText(%s), 4326), %s, %s, %s, %s, %s)")
+            comuna = EXCLUDED.comuna,
+            oneway = EXCLUDED.oneway,
+            oneway_invertido = EXCLUDED.oneway_invertido
+    """, edges_rows, template="(%s, %s, %s, %s, ST_SetSRID(ST_GeomFromText(%s), 4326), %s, %s, %s, %s, %s, %s, %s)")
     conn.commit()
     print("Edges insertados/actualizados (idempotente).\n")
 
