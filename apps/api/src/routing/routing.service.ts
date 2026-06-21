@@ -43,13 +43,12 @@ export class RoutingService {
     const costExpression = this.getCostExpression(request.mode);
 
     const result = await this.prisma.$queryRawUnsafe<
-      { distance_meters: number; segments: bigint; coordinates: string }[]
-    >(
-      `
+      { lengthM: number; pendientePct: number | null; geom_json: string }[]
+    >(`
       SELECT
-        SUM(e."lengthM") as distance_meters,
-        COUNT(*) as segments,
-        ST_AsGeoJSON(ST_LineMerge(ST_Collect(e.geom)))::text as coordinates
+        e."lengthM",
+        e."pendientePct",
+        ST_AsGeoJSON(e.geom)::text as geom_json
       FROM pgr_dijkstra(
         'SELECT id, source, target,
             ${costExpression.cost} AS cost,
@@ -57,26 +56,27 @@ export class RoutingService {
          FROM edges',
         $1::bigint, $2::bigint, directed := true
       ) d
-      JOIN edges e ON d.edge = e.id;
-    `,
-      originSnap.nodeId,
-      destinationSnap.nodeId,
-    );
+      JOIN edges e ON d.edge = e.id
+      ORDER BY d.seq;
+    `, originSnap.nodeId, destinationSnap.nodeId);
 
-    if (!result.length || result[0].distance_meters === null) {
-      throw new NotFoundException(
-        `No route could be found between these two points. They may be in disconnected parts of the network.`,
-      );
+    if (!result.length) {
+      throw new NotFoundException('No route could be found between these two points. They may be in disconnected parts of the network.');
     }
 
-    const row = result[0];
-    const geometry = JSON.parse(row.coordinates);
+    const segments = result.map((row) => ({
+      lengthMeters: row.lengthM,
+      slopePercent: row.pendientePct,
+      geometry: JSON.parse(row.geom_json),
+    }));
+
+    const distanceMeters = result.reduce((sum, row) => sum + row.lengthM, 0);
 
     return {
       mode: request.mode,
-      distanceMeters: Math.round(row.distance_meters),
-      segments: Number(row.segments),
-      geometry,
+      distanceMeters: Math.round(distanceMeters),
+      segments: segments.length,
+      segmentDetails: segments,
       originSnap,
       destinationSnap,
     };
