@@ -1,16 +1,18 @@
 {
-  "name": "database",
+  "name": "@ciclovias-cl/database",
   "version": "1.0.0",
-  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "studio": "prisma studio"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
+  "license": "MIT",
+  "description": "Prisma schema and client shared across apps/api and apps/pipeline",
+  "dependencies": {
+    "@prisma/client": "^7.8.0"
+  },
   "devDependencies": {
-    "@prisma/client": "^7.8.0",
     "@types/node": "^26.0.0",
     "dotenv": "^16.0.3",
     "prisma": "^7.8.0",
