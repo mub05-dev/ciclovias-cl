@@ -89,29 +89,46 @@ OSM Chile has ~0% coverage on cycleway quality/safety tags (`cycleway`, `surface
 
 ### M05 — Deploy & Observability
 
-Not yet scoped in detail (no GitHub issues created for this milestone as of 2026-06-21). Known constraints and prior experience that should shape it, based on Marco's other deployed projects (CFert, lab-analysis):
-- Target infra: AWS EC2 (Marco's standard stack), Docker Compose for local parity, Bitbucket Pipelines is Marco's usual CI/CD tool in professional projects — but this is a GitHub-hosted portfolio repo, so **GitHub Actions is likely the better fit here** for consistency with the rest of the repo's tooling (this hasn't been decided yet, flag it as an open question when M05 starts).
-- Needs: production Postgres+PostGIS+pgRouting instance (same image as local: `pgrouting/pgrouting:16-3.5-3.7`), environment variable management for `DATABASE_URL`, `NEXT_PUBLIC_MAPBOX_TOKEN`, `NEXT_PUBLIC_API_URL` across environments, CORS origin update for the production frontend URL (currently hardcoded to `localhost:3000` in `apps/api/src/main.ts`).
-- Observability: nothing built yet. At minimum should cover basic uptime/error visibility for the `/route` endpoint given it's the core value proposition — a broken router silently failing is the worst-case failure mode for this project.
-- Before scoping issues for this milestone in GitHub Projects, revisit with Marco: hosting choice (single EC2 instance vs. something simpler for a portfolio piece), whether a custom domain is wanted, and whether M04's enrichment data needs any special handling in production (e.g., is `TramoCalidad` data seeded, or does it start empty in production and get built up over time the same way as local).
+M05 is partially complete as of 2026-07-11. Remaining work is blocked on infrastructure cost decision.
 
-**M05 issues (not yet created in GitHub as of 2026-06-21 — create following the same pattern as M01-M04):**
+### Decisions made (2026-07-11)
 
-| # | Title | Labels | Priority |
-|---|---|---|---|
-| 33 | Decide CI/CD tool: GitHub Actions vs Bitbucket Pipelines for this repo | `infra`, `setup` | high |
-| 34 | Provision production Postgres+PostGIS+pgRouting instance on AWS EC2 | `infra` | high |
-| 35 | Set up environment variable management across environments (DATABASE_URL, Mapbox token, API URL) | `infra`, `setup` | high |
-| 36 | Update CORS configuration for production frontend origin | `infra` | high |
-| 37 | Write Dockerfiles for apps/api and apps/web (production builds) | `infra` | high |
-| 38 | Set up CI pipeline: run tests/lint on PR, build on merge to main | `infra` | medium |
-| 39 | Deploy pipeline: automated deploy to EC2 on merge to main | `infra` | medium |
-| 40 | Set up basic uptime/error monitoring for the /route endpoint | `infra` | medium |
-| 41 | Decide on custom domain (optional) and configure DNS/SSL if applicable | `infra` | low |
-| 42 | Production data seeding strategy: does TramoCalidad start empty or seeded? | `data`, `infra` | low |
+- **CI/CD**: GitHub Actions (#33 ✅)
+- **Hosting**: EC2 ruled out (Marco has no AWS account). **Railway Hobby plan (~$5/month)** is the chosen target — supports custom Docker images including `pgrouting/pgrouting:16-3.5-3.7`, 5 GB storage, 8 GB RAM per service. Decision pending Marco's budget approval.
+- **Domain**: No domain yet. Will deploy to Railway-provided URL initially. Custom domain deferred (#41).
+- **Web**: Can also use Vercel for Next.js (free), with API + DB on Railway.
 
-Note on ordering: unlike M01-M04 where issues depended roughly linearly on the previous one, here #33 (CI/CD tool decision) should be resolved first since it shapes how the rest of the pipeline issues get implemented — no point writing `.github/workflows/` files if the decision lands on Bitbucket Pipelines, or vice versa.
+### Work completed so far
+
+- `apps/api/Dockerfile` — multi-stage build, prisma generate with dummy DATABASE_URL, `node apps/api/dist/main`
+- `apps/web/Dockerfile` — multi-stage build, Next.js standalone output, NEXT_PUBLIC_* as build args
+- `apps/web/next.config.js` — `output: "standalone"` added
+- `.dockerignore` at root
+- `docker-compose.prod.yml` — postgres + api + web, postgres not exposed publicly, api on :4000, web on :3000
+- `.env.prod.example` — template for POSTGRES_USER/PASSWORD/DB, NEXT_PUBLIC_MAPBOX_TOKEN, EC2_PUBLIC_IP
+- `infra/bootstrap-ec2.sh` — EC2 bootstrap script (still valid if EC2 is ever used)
+
+### Remaining issues (#35-42)
+
+| # | Title | Status |
+|---|---|---|
+| 35 | Set up environment variable management across environments | ⬜ blocked on hosting decision |
+| 36 | Update CORS for production frontend origin | ⬜ blocked on hosting decision (need the URL) |
+| 37 | Write Dockerfiles for api and web | ✅ done |
+| 38 | CI pipeline: lint/build on PR | ⬜ ready to implement (GitHub Actions) |
+| 39 | Deploy pipeline: automated deploy on merge to main | ⬜ blocked on hosting decision |
+| 40 | Basic uptime/error monitoring for /route | ⬜ blocked on hosting decision |
+| 41 | Custom domain + SSL | ⬜ deferred (no domain yet) |
+| 42 | Production data seeding strategy for TramoCalidad | ⬜ decision: start empty, build up same as local |
+
+### Key technical notes for when M05 resumes
+
+- `docker-compose.prod.yml` targets a single-host Docker setup (EC2 or similar). For Railway, each service deploys independently via its own Dockerfile — the compose file is not used.
+- Railway deployment: point each service at the repo + Dockerfile path. Set env vars in Railway dashboard. `DATABASE_URL` in api service should reference Railway's internal postgres service URL.
+- `NEXT_PUBLIC_API_URL` is baked at build time (Next.js limitation) — needs the final production URL before building the web image.
+- CORS in `apps/api/src/main.ts` currently hardcoded to `http://localhost:3000` — must update to production web URL before deploy (#36).
+- TramoCalidad starts empty in production — Marco registers segments manually after deploy, same workflow as local.
 
 ## Next immediate step
 
-Start M05. Issues #33-42 are planned (see table above) but not yet created in GitHub as of 2026-07-11. Begin with #33 (CI/CD tool decision) since it shapes the rest of the pipeline implementation.
+Resume M05 when Marco decides on Railway Hobby plan (~$5/month). Start with #36 (update CORS to production URL) + #35 (set env vars in Railway dashboard), then #38 (GitHub Actions CI), then #39 (deploy pipeline).
