@@ -2,12 +2,12 @@
 
 Bike routing platform for Chile · prioritizes real cycleways, slope and road safety · OSM + PostGIS + pgRouting
 
-## Project status (updated 2026-06-21)
+## Project status (updated 2026-07-11)
 
 - ✅ M01 — Data Pipeline (issues #1-8)
 - ✅ M02 — Routing Engine (issues #9-15)
 - ✅ M03 — Map & Frontend (issues #16-24)
-- ⬜ M04 — Enrichment Layer (next)
+- ✅ M04 — Enrichment Layer (issues #25-32)
 - ⬜ M05 — Deploy & Observability
 
 GitHub Projects kanban board tracks all milestones/issues. Check there for granular task status.
@@ -35,9 +35,9 @@ Turborepo + npm monorepo:
 - `pgr_dijkstra` with `directed := true` — **street direction (oneway) is always respected**, this was a deliberate decision (safer/more realistic even if routes are longer).
 - 4 modes, cost calculated on-the-fly in SQL (not precomputed in a column), respecting oneway via `CASE WHEN oneway AND oneway_invertido THEN -1 ...`:
   - `short`: `cost = lengthM`
-  - `safe`: `cost = lengthM * scoreTipo`
+  - `safe`: `cost = lengthM * COALESCE(tc.score, scoreTipo)` — uses TramoCalidad enrichment if available, falls back to OSM-based scoreTipo
   - `flat`: `cost = lengthM * (1 + GREATEST(pendientePct, 0) / 5)` (only penalizes uphill; reverse direction flips slope sign)
-  - `balanced`: `cost = lengthM * scoreFinal`
+  - `balanced`: `cost = lengthM * COALESCE(tc.score * (1 + GREATEST(pendientePct,0)/5), scoreFinal)` — enrichment + slope combined
 - Coordinate snapping: SQL function `snap_to_nearest_node(lon, lat)` (lives as a standalone script, not a Prisma migration — see `apps/pipeline/scripts/sql/`). Max acceptable snap distance: 500m, enforced in `RoutingService`.
 - `POST /route` endpoint (`apps/api/src/routing/`): validates input (lat -90/90, lon -180/180, origin≠destination), returns `segmentDetails` (array of individual segments with `geometry` + `slopePercent`) instead of one fused LineString — this supports the frontend's slope-coloring feature.
 
@@ -45,7 +45,8 @@ Turborepo + npm monorepo:
 
 - `RouteMap.tsx` component: click-to-select origin/destination, 4-mode selector, welcome overlay (localStorage-gated, shows once), 4-step progress indicator, loading spinner + map overlay during calculation.
 - Signature visual element: route colored by real slope via Mapbox data-driven styling (`interpolate` expression: green 0% → amber 4% → orange 8% → red 15%+), with a flat/mild/moderate/steep legend. Confirmed visually that "flat" mode measurably reduces orange/red segments vs "short" mode in hilly areas (Las Condes/Vitacura).
-- Color palette: `carbon` (#14161b), `carbon-surface` (#1e2233), `accent-blue` (#4d8af0), `accent-green` (#4ade80), `muted` (#8b93a7).
+- **Enrichment layer (M04)**: enriched segments (with a TramoCalidad report) render in purple (#a78bfa) instead of slope colors. "Report" mode toggle lets user click a route segment to submit a quality report (type, condition, lit, notes). `enriched` stored as 0/1 in GeoJSON properties (not boolean) for reliable Mapbox filter compatibility.
+- Color palette: `carbon` (#14161b), `carbon-surface` (#1e2233), `accent-blue` (#4d8af0), `accent-green` (#4ade80), `muted` (#8b93a7), `violet` (#a78bfa, enriched segments).
 
 ## Conventions
 
@@ -61,33 +62,30 @@ Turborepo + npm monorepo:
 4. **Never download OSM data per-comuna and merge graphs afterward** — border nodes get different IDs across separate downloads and never connect. Always download the full corridor as one unified polygon query.
 5. Tailwind v4 has no `tailwind.config.js`/`init` command — configuration lives in CSS via `@theme` and `@import "tailwindcss"`.
 
-## Roadmap: M04 and M05 (remaining work)
+## M04 — Enrichment Layer (completed 2026-07-11)
 
-### M04 — Enrichment Layer
+OSM Chile has ~0% coverage on cycleway quality/safety tags (`cycleway`, `surface`, `segregated`, `lit`). Google Maps, Bicineta, and other existing tools all draw from this same weak dataset. M04 adds a real-world data layer on top of OSM to correct this.
 
-The `TramoCalidad` table already exists in the Prisma schema (from M01) but is unused. This is the project's real long-term differentiator: OSM Chile has ~0% coverage on cycleway quality/safety tags (`cycleway`, `surface`, `segregated`, `lit` all showed 0% coverage when validated against the real dataset). Google Maps, Bicineta, and other existing tools all draw from this same weak dataset — this layer is what lets `ciclovias-cl` go beyond them instead of being "another router with the same data."
+### What was built
 
-Planned scope:
-- **Manual segment registration**: Marco registers real-world segment quality as he rides — protected/painted/shared type, condition (good/fair/poor), lit/unlit, free-text notes. `TramoCalidad` schema already supports this (`tipoReal`, `estado`, `iluminacion`, `notas`, `reportadoPor`, `createdAt`).
-- **Router integration**: cost calculation in `RoutingService` should check `TramoCalidad` first for a given edge; if a manual entry exists, use it to adjust the cost; otherwise fall back to the existing `highway`-based `scoreTipo`/`scoreFinal`.
-- **UI for registration**: simplest viable version is marking a segment on the existing map (desktop, after a ride) rather than live GPS tracking — live tracking adds real complexity (background location, battery, accuracy) that isn't needed for a v1 aimed at a single user (Marco) building up coverage on his own habitual routes.
-- **Scope honesty**: this will NOT achieve citywide coverage in v1 — it covers only the segments Marco personally rides and registers. That's fine and should be communicated as such (a real differentiator on his actual routes, not a false claim of full-corridor superiority).
-- Expected new Prisma work: none needed for the schema (`TramoCalidad` exists), but likely a new NestJS module/controller for CRUD on segment reports, and a corresponding UI panel/mode in `RouteMap.tsx` (e.g. "report a segment" mode alongside "plan a route" mode).
+- **TramoCalidad schema**: columns renamed to English (`type`, `condition`, `lit`, `notes`, `reported_by`, `created_at`) with `@map` decorators. Table: `tramos_calidad`.
+- **Segment types**: `protected` (score 1.0), `painted` (1.2), `shared` (1.5), `unprotected` (2.5). Condition multiplier: `good` ×1.0, `fair` ×1.2, `poor` ×1.5.
+- **CRUD API**: `POST/GET/PUT/DELETE /segment-reports` (`apps/api/src/segment-reports/`).
+- **Router integration**: `RoutingService` uses a `LEFT JOIN LATERAL` inside the pgr_dijkstra SQL string to look up `tramos_calidad` per edge. `COALESCE(tc.score, scoreTipo/scoreFinal)` — enriched data wins, OSM data is fallback.
+- **"Report" UI mode**: toggle in `RouteMap.tsx` — click any segment of a calculated route to submit a quality report. edgeId comes from the GeoJSON feature directly (no snap-to-edge needed).
+- **Visual distinction**: enriched segments render purple (#a78bfa); non-enriched use slope color scheme as before.
 
-**M04 issues (not yet created in GitHub as of 2026-06-21 — create following the same pattern as M01-M03: title, labels, priority, assigned to milestone, starting in `Backlog`):**
+### Coverage as of 2026-07-11
 
-| # | Title | Labels | Priority |
-|---|---|---|---|
-| 25 | Design API contract for segment quality reports (CRUD) | `routing`, `data` | high |
-| 26 | Build TramoCalidad CRUD module in NestJS (create/read/update/delete reports) | `feature`, `data` | high |
-| 27 | Modify cost calculation to check TramoCalidad first, fallback to highway-based scoreTipo/scoreFinal | `routing`, `feature` | high |
-| 28 | Add "report a segment" mode to RouteMap.tsx (click a segment, submit quality report) | `frontend`, `feature` | high |
-| 29 | Visual distinction for enriched vs non-enriched segments on the map | `frontend` | medium |
-| 30 | Validate a segment click maps correctly to an edge id (snapping to nearest edge, not node) | `routing` | medium |
-| 31 | Manual QA: register real segments from Marco's own routes, confirm router uses them | `data` | medium |
-| 32 | Update README/CLAUDE.md with M04 outcomes and enrichment coverage stats | `data` | low |
+4 segments registered (edges 14360, 14367, 14392, 37432 — all in the San Miguel / Santiago corridor). All reported as `protected`, confirming OSM underestimates quality on these streets. Coverage grows as Marco rides and reports.
 
-Note on #30: this is a new technical challenge not faced in M01-M03 — all prior snapping was to *nodes* (for route origin/destination), but reporting a segment's quality requires snapping a click to an *edge* (a line between two nodes), which needs different logic (`ST_ClosestPoint` against lines, not points via KNN `<->` against points). Worth resolving early since the rest of the milestone depends on it.
+### Key implementation notes
+
+- Single quotes inside the pgr_dijkstra SQL string literal must be doubled (`''protected''`).
+- `enriched` stored as 0/1 integer in GeoJSON properties — boolean serialization from PostgreSQL via Prisma is unreliable in Mapbox filter expressions.
+- `#30` (snap-to-edge) was resolved by design: reports are limited to route segments already displayed, so edgeId is read from the rendered GeoJSON feature, not computed via `ST_ClosestPoint`.
+
+## Roadmap: M05 (remaining work)
 
 ### M05 — Deploy & Observability
 
@@ -116,4 +114,4 @@ Note on ordering: unlike M01-M04 where issues depended roughly linearly on the p
 
 ## Next immediate step
 
-Start M04. Issues #25-32 are planned (see table above) but **not yet created in GitHub** as of 2026-06-21 — create them on the kanban board first (Backlog → In Progress → Done, same workflow as M01-M03), then start with #25 (API contract design) since #26-30 depend on it.
+Start M05. Issues #33-42 are planned (see table above) but not yet created in GitHub as of 2026-07-11. Begin with #33 (CI/CD tool decision) since it shapes the rest of the pipeline implementation.
