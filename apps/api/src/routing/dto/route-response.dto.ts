@@ -4,6 +4,7 @@ export class SnapResultDto {
 }
 
 export class RouteSegmentDto {
+  edgeId: number;
   lengthMeters: number;
   slopePercent: number | null;
   enriched: boolean;

@@ -65,9 +65,10 @@ export class RoutingService {
     const costExpression = this.getCostExpression(request.mode);
 
     const result = await this.prisma.$queryRawUnsafe<
-      { lengthM: number; pendientePct: number | null; geom_json: string; enriched: boolean }[]
+      { edge_id: number; lengthM: number; pendientePct: number | null; geom_json: string; enriched: boolean }[]
     >(`
       SELECT
+        e.id AS edge_id,
         e."lengthM",
         e."pendientePct",
         ST_AsGeoJSON(e.geom)::text as geom_json,
@@ -90,6 +91,7 @@ export class RoutingService {
     }
 
     const segments = result.map((row) => ({
+      edgeId: Number(row.edge_id),
       lengthMeters: row.lengthM,
       slopePercent: row.pendientePct,
       geometry: JSON.parse(row.geom_json),
