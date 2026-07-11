@@ -50,18 +50,18 @@ model Edge {
   @@map("edges")
 }
 
-// Tu capa de enriquecimiento propio (M04) — reportes manuales de calidad real
+// Manual enrichment layer (M04) — real-world segment quality reports
 model TramoCalidad {
-  id            Int      @id @default(autoincrement())
-  edgeId        Int
-  tipoReal      String   // segregada, pintada, compartida, sin_proteccion
-  estado        String   // bueno, regular, malo
-  iluminacion   Boolean?
-  notas         String?
-  reportadoPor  String   @default("marco") // por ahora solo tú reportas
-  createdAt     DateTime @default(now())
+  id          Int      @id @default(autoincrement())
+  edgeId      Int
+  type        String   // protected | painted | shared | unprotected
+  condition   String   // good | fair | poor
+  lit         Boolean?
+  notes       String?
+  reportedBy  String   @default("marco") @map("reported_by")
+  createdAt   DateTime @default(now()) @map("created_at")
 
-  edge          Edge     @relation(fields: [edgeId], references: [id])
+  edge        Edge     @relation(fields: [edgeId], references: [id])
 
   @@map("tramos_calidad")
 }
