@@ -9,3 +9,5 @@ __pycache__
 .venv
 apps/pipeline/data/
 apps/pipeline/cache/
+apps/pipeline/scripts/cache/
+apps/pipeline/route_test_results.json

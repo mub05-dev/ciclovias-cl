@@ -1,12 +1,20 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Map, { Source, Layer, Marker, type MapMouseEvent } from "react-map-gl/mapbox";
 import "mapbox-gl/dist/mapbox-gl.css";
 
 const MAPBOX_TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+const WELCOME_SEEN_KEY = "ciclovias-cl-welcome-seen";
 
 type RouteMode = "short" | "safe" | "flat" | "balanced";
+
+const MODE_LABELS: Record<RouteMode, string> = {
+  short: "Short",
+  safe: "Safe",
+  flat: "Flat",
+  balanced: "Balanced",
+};
 
 type RouteSegment = {
   lengthMeters: number;
@@ -28,6 +36,8 @@ type RouteResponse = {
 
 type ClickPoint = { lat: number; lon: number } | null;
 
+type Step = 1 | 2 | 3 | 4;
+
 export default function RouteMap() {
   const [origin, setOrigin] = useState<ClickPoint>(null);
   const [destination, setDestination] = useState<ClickPoint>(null);
@@ -35,9 +45,23 @@ export default function RouteMap() {
   const [route, setRoute] = useState<RouteResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showWelcome, setShowWelcome] = useState(false);
+
+  useEffect(() => {
+    const seen = localStorage.getItem(WELCOME_SEEN_KEY);
+    if (!seen) setShowWelcome(true);
+  }, []);
+
+  const dismissWelcome = () => {
+    localStorage.setItem(WELCOME_SEEN_KEY, "1");
+    setShowWelcome(false);
+  };
+
+  const currentStep: Step = !origin ? 1 : !destination ? 2 : !route ? 3 : 4;
 
   const handleMapClick = useCallback(
     (e: MapMouseEvent) => {
+      if (loading) return;
       const point = { lat: e.lngLat.lat, lon: e.lngLat.lng };
       if (!origin) {
         setOrigin(point);
@@ -49,7 +73,7 @@ export default function RouteMap() {
         setRoute(null);
       }
     },
-    [origin, destination],
+    [origin, destination, loading],
   );
 
   const calculateRoute = useCallback(async () => {
@@ -83,8 +107,6 @@ export default function RouteMap() {
     setError(null);
   };
 
-  // Construye un FeatureCollection donde cada feature es un segmento,
-  // con slopePercent como propiedad para el coloreado data-driven.
   const routeFeatureCollection = route
     ? {
         type: "FeatureCollection" as const,
@@ -119,7 +141,6 @@ export default function RouteMap() {
               paint={{
                 "line-width": 4,
                 "line-opacity": 0.9,
-                // Coloreado por pendiente: verde (plano) -> ámbar (moderado) -> rojo (fuerte)
                 "line-color": [
                   "interpolate",
                   ["linear"],
@@ -135,13 +156,55 @@ export default function RouteMap() {
         )}
       </Map>
 
+      {/* Overlay de carga sobre el mapa */}
+      {loading && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-carbon/20">
+          <div className="rounded-full bg-carbon-surface/90 px-4 py-2 text-sm text-white shadow-lg">
+            Calculating route…
+          </div>
+        </div>
+      )}
+
+      {/* Mensaje de bienvenida (solo primera visita) */}
+      {showWelcome && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center bg-carbon/70 backdrop-blur-sm">
+          <div className="mx-4 max-w-sm rounded-xl bg-carbon-surface p-6 shadow-xl">
+            <h2 className="mb-2 text-lg font-semibold text-white">Welcome to ciclovias-cl</h2>
+            <p className="mb-4 text-sm text-muted">
+              A bike routing tool for Santiago that considers real cycleways, road
+              safety, and slope — not just distance. Click the map to pick a starting
+              point, then a destination, choose a mode, and calculate your route.
+            </p>
+            <button
+              onClick={dismissWelcome}
+              className="w-full rounded-lg bg-accent-blue px-3 py-2 text-sm font-medium text-white"
+            >
+              Got it
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="absolute top-4 left-4 w-80 rounded-xl bg-carbon-surface/95 p-4 shadow-lg backdrop-blur">
         <h1 className="mb-3 text-lg font-semibold text-white">ciclovias-cl</h1>
 
+        {/* Indicador de pasos */}
+        <div className="mb-3 flex items-center gap-1">
+          {([1, 2, 3, 4] as Step[]).map((step) => (
+            <div
+              key={step}
+              className={`h-1.5 flex-1 rounded-full transition ${
+                step <= currentStep ? "bg-accent-blue" : "bg-carbon"
+              }`}
+            />
+          ))}
+        </div>
+
         <p className="mb-3 text-sm text-muted">
-          {!origin && "Click the map to set your starting point."}
-          {origin && !destination && "Now click to set your destination."}
-          {origin && destination && !route && "Choose a mode and calculate your route."}
+          {currentStep === 1 && "1. Click the map to set your starting point."}
+          {currentStep === 2 && "2. Now click to set your destination."}
+          {currentStep === 3 && "3. Choose a mode and calculate your route."}
+          {currentStep === 4 && `4. Route ready — showing "${MODE_LABELS[mode]}" mode.`}
         </p>
 
         <div className="mb-3 grid grid-cols-2 gap-2">
@@ -149,11 +212,11 @@ export default function RouteMap() {
             <button
               key={m}
               onClick={() => setMode(m)}
-              className={`rounded-lg px-3 py-2 text-sm capitalize transition ${
+              className={`rounded-lg px-3 py-2 text-sm transition ${
                 mode === m ? "bg-accent-blue text-white" : "bg-carbon text-muted hover:text-white"
               }`}
             >
-              {m}
+              {MODE_LABELS[m]}
             </button>
           ))}
         </div>
@@ -162,8 +225,11 @@ export default function RouteMap() {
           <button
             onClick={calculateRoute}
             disabled={!origin || !destination || loading}
-            className="flex-1 rounded-lg bg-accent-green px-3 py-2 text-sm font-medium text-carbon disabled:opacity-40"
+            className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-accent-green px-3 py-2 text-sm font-medium text-carbon disabled:opacity-40"
           >
+            {loading && (
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-carbon border-t-transparent" />
+            )}
             {loading ? "Calculating..." : "Calculate route"}
           </button>
           <button onClick={reset} className="rounded-lg bg-carbon px-3 py-2 text-sm text-muted hover:text-white">
