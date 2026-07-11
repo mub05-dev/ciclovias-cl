@@ -185,7 +185,7 @@ export default function RouteMap() {
           id: i,
           properties: {
             slopePercent: seg.slopePercent !== null ? Math.abs(seg.slopePercent) : 0,
-            enriched: seg.enriched,
+            enriched: seg.enriched === true || (seg.enriched as unknown) === "true" ? 1 : 0,
             edgeId: seg.edgeId,
           },
           geometry: seg.geometry,
@@ -193,7 +193,7 @@ export default function RouteMap() {
       }
     : null;
 
-  const enrichedCount = route?.segmentDetails.filter((s) => s.enriched).length ?? 0;
+  const enrichedCount = route?.segmentDetails.filter((s) => s.enriched === true || (s.enriched as unknown) === "true").length ?? 0;
 
   return (
     <div className="relative h-screen w-full bg-carbon">
@@ -215,7 +215,7 @@ export default function RouteMap() {
             <Layer
               id="route-enriched"
               type="line"
-              filter={["==", ["get", "enriched"], true]}
+              filter={["==", ["get", "enriched"], 1]}
               paint={{
                 "line-width": 6,
                 "line-opacity": 1,
@@ -226,7 +226,7 @@ export default function RouteMap() {
             <Layer
               id="route-line"
               type="line"
-              filter={["==", ["get", "enriched"], false]}
+              filter={["==", ["get", "enriched"], 0]}
               paint={{
                 "line-width": 4,
                 "line-opacity": 0.9,
