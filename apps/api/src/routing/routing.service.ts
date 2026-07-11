@@ -9,6 +9,28 @@ import { RouteResponseDto, SnapResultDto } from './dto/route-response.dto';
 
 const MAX_SNAP_DISTANCE_METERS = 500;
 
+// Lateral join that derives a quality score from TramoCalidad for each edge.
+// Single quotes are doubled because this SQL runs inside a pgr_dijkstra string literal.
+const ENRICHMENT_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT
+      CASE type
+        WHEN ''protected''  THEN 1.0
+        WHEN ''painted''    THEN 1.2
+        WHEN ''shared''     THEN 1.5
+        WHEN ''unprotected'' THEN 2.5
+      END
+      * CASE condition
+        WHEN ''good'' THEN 1.0
+        WHEN ''fair'' THEN 1.2
+        WHEN ''poor'' THEN 1.5
+      END AS score
+    FROM tramos_calidad
+    WHERE "edgeId" = e.id
+    ORDER BY created_at DESC
+    LIMIT 1
+  ) tc ON true`;
+
 @Injectable()
 export class RoutingService {
   constructor(private readonly prisma: PrismaService) {}
@@ -43,17 +65,20 @@ export class RoutingService {
     const costExpression = this.getCostExpression(request.mode);
 
     const result = await this.prisma.$queryRawUnsafe<
-      { lengthM: number; pendientePct: number | null; geom_json: string }[]
+      { lengthM: number; pendientePct: number | null; geom_json: string; enriched: boolean }[]
     >(`
       SELECT
         e."lengthM",
         e."pendientePct",
-        ST_AsGeoJSON(e.geom)::text as geom_json
+        ST_AsGeoJSON(e.geom)::text as geom_json,
+        EXISTS (
+          SELECT 1 FROM tramos_calidad WHERE "edgeId" = e.id
+        ) AS enriched
       FROM pgr_dijkstra(
-        'SELECT id, source, target,
+        'SELECT e.id, e.source, e.target,
             ${costExpression.cost} AS cost,
             ${costExpression.reverseCost} AS reverse_cost
-         FROM edges',
+         FROM edges e${ENRICHMENT_LATERAL}',
         $1::bigint, $2::bigint, directed := true
       ) d
       JOIN edges e ON d.edge = e.id
@@ -68,6 +93,7 @@ export class RoutingService {
       lengthMeters: row.lengthM,
       slopePercent: row.pendientePct,
       geometry: JSON.parse(row.geom_json),
+      enriched: row.enriched,
     }));
 
     const distanceMeters = result.reduce((sum, row) => sum + row.lengthM, 0);
@@ -109,23 +135,25 @@ export class RoutingService {
     switch (mode) {
       case RouteMode.SHORT:
         return {
-          cost: `CASE WHEN oneway AND oneway_invertido THEN -1 ELSE "lengthM" END`,
-          reverseCost: `CASE WHEN oneway AND NOT oneway_invertido THEN -1 ELSE "lengthM" END`,
+          cost: `CASE WHEN e.oneway AND e.oneway_invertido THEN -1 ELSE e."lengthM" END`,
+          reverseCost: `CASE WHEN e.oneway AND NOT e.oneway_invertido THEN -1 ELSE e."lengthM" END`,
         };
       case RouteMode.SAFE:
         return {
-          cost: `CASE WHEN oneway AND oneway_invertido THEN -1 ELSE "lengthM" * "scoreTipo" END`,
-          reverseCost: `CASE WHEN oneway AND NOT oneway_invertido THEN -1 ELSE "lengthM" * "scoreTipo" END`,
+          cost: `CASE WHEN e.oneway AND e.oneway_invertido THEN -1 ELSE e."lengthM" * COALESCE(tc.score, e."scoreTipo") END`,
+          reverseCost: `CASE WHEN e.oneway AND NOT e.oneway_invertido THEN -1 ELSE e."lengthM" * COALESCE(tc.score, e."scoreTipo") END`,
         };
       case RouteMode.FLAT:
         return {
-          cost: `CASE WHEN oneway AND oneway_invertido THEN -1 ELSE "lengthM" * (1 + GREATEST(COALESCE("pendientePct", 0), 0) / 5) END`,
-          reverseCost: `CASE WHEN oneway AND NOT oneway_invertido THEN -1 ELSE "lengthM" * (1 + GREATEST(COALESCE(-"pendientePct", 0), 0) / 5) END`,
+          cost: `CASE WHEN e.oneway AND e.oneway_invertido THEN -1 ELSE e."lengthM" * (1 + GREATEST(COALESCE(e."pendientePct", 0), 0) / 5) END`,
+          reverseCost: `CASE WHEN e.oneway AND NOT e.oneway_invertido THEN -1 ELSE e."lengthM" * (1 + GREATEST(COALESCE(-e."pendientePct", 0), 0) / 5) END`,
         };
       case RouteMode.BALANCED:
         return {
-          cost: `CASE WHEN oneway AND oneway_invertido THEN -1 ELSE "lengthM" * "scoreFinal" END`,
-          reverseCost: `CASE WHEN oneway AND NOT oneway_invertido THEN -1 ELSE "lengthM" * "scoreFinal" END`,
+          // For enriched edges: type×condition score combined with slope penalty.
+          // For non-enriched: fall back to precomputed scoreFinal.
+          cost: `CASE WHEN e.oneway AND e.oneway_invertido THEN -1 ELSE e."lengthM" * COALESCE(tc.score * (1 + GREATEST(COALESCE(e."pendientePct", 0), 0) / 5), e."scoreFinal") END`,
+          reverseCost: `CASE WHEN e.oneway AND NOT e.oneway_invertido THEN -1 ELSE e."lengthM" * COALESCE(tc.score * (1 + GREATEST(COALESCE(-e."pendientePct", 0), 0) / 5), e."scoreFinal") END`,
         };
     }
   }

@@ -6,6 +6,7 @@ export class SnapResultDto {
 export class RouteSegmentDto {
   lengthMeters: number;
   slopePercent: number | null;
+  enriched: boolean;
   geometry: {
     type: 'LineString';
     coordinates: [number, number][];
